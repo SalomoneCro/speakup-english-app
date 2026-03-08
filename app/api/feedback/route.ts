@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+
+// Fallback tips used when Gemini is unavailable
 const phonemeTips: Record<string, string> = {
   "ð":  "Para 'th' suave (como en 'the'): pon la lengua entre los dientes y vibra la garganta.",
   "θ":  "Para 'th' fuerte (como en 'think'): pon la lengua entre los dientes y sopla sin vibrar.",
@@ -13,18 +17,11 @@ const phonemeTips: Record<string, string> = {
   "ʊ":  "Labios redondeados pero relajados, menos tensos que la 'u' española.",
   "ʌ":  "Boca entreabierta y relajada, como una 'a' muy suave.",
   "ə":  "Este sonido es casi imperceptible — una vocal muy neutra y débil.",
-  "z":  "Para la 'z': como la 's' pero haciendo vibrar la garganta. Pon la mano en el cuello.",
-  "ʃ":  "Para 'sh': labios hacia adelante, lengua cerca del paladar — como cuando pides silencio.",
-  "ŋ":  "Para 'ng': la parte trasera de la lengua toca el fondo del paladar y el aire sale por la nariz.",
-  "tʃ": "Para 'ch': empieza con la lengua tocando el paladar y suéltala con un soplo.",
+  "z":  "Para la 'z': como la 's' pero haciendo vibrar la garganta.",
+  "ʃ":  "Para 'sh': labios hacia adelante, lengua cerca del paladar — como 'shhh'.",
+  "ŋ":  "Para 'ng': la parte trasera de la lengua toca el fondo del paladar, aire por la nariz.",
+  "tʃ": "Para 'ch': empieza con la lengua en el paladar y suéltala con un soplo.",
 };
-
-const encouragements = [
-  "¡Excelente pronunciación!",
-  "¡Muy bien! Sigue así.",
-  "¡Perfecto! Tu pronunciación es muy buena.",
-  "¡Genial! Casi sin errores.",
-];
 
 interface WordScore {
   word: string;
@@ -32,45 +29,78 @@ interface WordScore {
   worstPhone: { phone: string; quality_score: number; sound_most_like: string } | null;
 }
 
+function buildRuleBasedFeedback(overallScore: number, words: WordScore[]): string {
+  if (overallScore >= 85) {
+    return "¡Excelente pronunciación! Sigue así.";
+  }
+
+  const imperfectWords = words
+    .filter((w) => w.accuracyScore < 85)
+    .sort((a, b) => a.accuracyScore - b.accuracyScore)
+    .slice(0, 2);
+
+  if (imperfectWords.length === 0) {
+    return "¡Casi perfecto! Sigue practicando para afinar los detalles.";
+  }
+
+  return imperfectWords.map((w) => {
+    const phone = w.worstPhone?.phone ?? "";
+    const tip = phonemeTips[phone];
+    const confused = w.worstPhone?.sound_most_like
+      ? ` (sonó como '${w.worstPhone.sound_most_like}')`
+      : "";
+    return tip
+      ? `En "${w.word}"${confused}: ${tip}`
+      : `La palabra "${w.word}" necesita más práctica (${w.accuracyScore}%).`;
+  }).join(" ");
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const { overallScore, words } = await req.json();
+    const { referenceText, overallScore, words } = await req.json();
 
-    // High score — just encourage
-    if (overallScore >= 85) {
-      const msg = encouragements[Math.floor(Math.random() * encouragements.length)];
-      return NextResponse.json({ feedback: msg });
-    }
-
-    // Find the worst words
-    const badWords: WordScore[] = (words as WordScore[])
-      .filter((w) => w.accuracyScore < 65)
+    // Words that need feedback: both yellow (65-84) and red (<65)
+    const imperfectWords: WordScore[] = (words as WordScore[])
+      .filter((w) => w.accuracyScore < 85)
       .sort((a, b) => a.accuracyScore - b.accuracyScore)
-      .slice(0, 2);
+      .slice(0, 3);
 
-    if (badWords.length === 0) {
-      return NextResponse.json({
-        feedback: "¡Casi perfecto! Sigue practicando para afinar los detalles.",
-      });
-    }
-
-    const lines: string[] = [];
-
-    for (const w of badWords) {
+    const wordDetails = imperfectWords.map((w) => {
       const phone = w.worstPhone?.phone ?? "";
-      const tip = phonemeTips[phone];
+      const tip = phonemeTips[phone] ?? "";
       const confused = w.worstPhone?.sound_most_like
-        ? ` (sonó como '${w.worstPhone.sound_most_like}')`
+        ? `, sonó como '${w.worstPhone.sound_most_like}'`
         : "";
+      const quality = w.accuracyScore >= 65 ? "amarilla (mejorable)" : "roja (necesita trabajo)";
+      return `• "${w.word}" → puntuación ${w.accuracyScore}% (${quality})${confused}${tip ? `. Tip fonético: ${tip}` : ""}`;
+    }).join("\n");
 
-      if (tip) {
-        lines.push(`En "${w.word}"${confused}: ${tip}`);
-      } else {
-        lines.push(`La palabra "${w.word}" necesita más práctica (${w.accuracyScore}%).`);
-      }
+    const prompt = overallScore >= 85
+      ? `El estudiante pronunció muy bien "${referenceText}" con ${overallScore}/100. Felicítalo en español en 1 oración entusiasta y corta.`
+      : `Eres un tutor de pronunciación inglés para hispanohablantes. El estudiante practicó: "${referenceText}" — puntaje: ${overallScore}/100.
+
+Palabras con pronunciación imperfecta:
+${wordDetails || "ninguna específica, pronunciación general imprecisa"}
+
+Escribe en español 2-3 oraciones CORTAS y directas:
+- Para cada palabra imperfecta: di qué pronunció mal y cómo corregirlo físicamente (ejemplo: "pronunciaste 'the' como una 'd', pero debes poner la lengua entre los dientes")
+- Si una palabra está en amarillo (mejorable), el tono es suave: "está bien pero puedes mejorar haciendo..."
+- Si está en rojo, el tono es más directo: "esta palabra necesita trabajo, intenta..."
+- Sin saludos ni palabras de relleno. Solo el consejo.`;
+
+    // Try Gemini, fall back to rule-based if unavailable
+    try {
+      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+      const result = await model.generateContent(prompt);
+      const text = result.response.text().trim();
+      if (text) return NextResponse.json({ feedback: text });
+    } catch (geminiErr) {
+      console.warn("Gemini unavailable, using rule-based fallback:", geminiErr);
     }
 
-    return NextResponse.json({ feedback: lines.join(" ") });
+    // Fallback: rule-based
+    return NextResponse.json({ feedback: buildRuleBasedFeedback(overallScore, words) });
+
   } catch (err) {
     console.error("Feedback error:", err);
     return NextResponse.json({ feedback: "" });
