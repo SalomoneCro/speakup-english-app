@@ -7,16 +7,17 @@ The AI tutor speaks and gives feedback in Spanish, while the practice content is
 ## Tech Stack
 - **Framework**: Next.js (App Router) + TypeScript
 - **Styling**: Tailwind CSS (mobile-first)
-- **STT + Pronunciation**: Azure AI Speech (`microsoft-cognitiveservices-speech-sdk`)
+- **STT + Pronunciation**: Speechace API (real audio-based phoneme scoring, built for L2 learners)
 - **LLM Feedback**: Google Gemini 2.0 Flash (`@google/generative-ai`)
 - **TTS**: Google Cloud Text-to-Speech (REST API)
 - **PWA**: manifest.json + apple-web-app meta tags
 
+> Azure was dropped — card issues. Speechace replaced it with better L2 pronunciation scoring.
+
 ## API Keys Needed (in .env.local)
 | Variable | Where to get it |
 |---|---|
-| `AZURE_SPEECH_KEY` | portal.azure.com → Azure AI Speech resource |
-| `AZURE_SPEECH_REGION` | Same resource (e.g. `eastus`) |
+| `SPEECHACE_API_KEY` | speechace.com → Developer API |
 | `GEMINI_API_KEY` | aistudio.google.com/app/apikey |
 | `GOOGLE_TTS_API_KEY` | console.cloud.google.com → Cloud Text-to-Speech API |
 

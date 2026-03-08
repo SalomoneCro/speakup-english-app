@@ -1,5 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
-import * as sdk from "microsoft-cognitiveservices-speech-sdk";
+
+interface SpeechacePhone {
+  phone: string;
+  quality_score: number;
+  sound_most_like: string;
+}
+
+interface SpeechaceWord {
+  word: string;
+  quality_score: number;
+  phone_score_list: SpeechacePhone[];
+}
+
+interface SpeechaceResponse {
+  status: string;
+  text_score: {
+    quality_score: number;
+    fluency_score?: { overall_fluency_score: number };
+    word_score_list: SpeechaceWord[];
+  };
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -11,55 +31,60 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing audio or referenceText" }, { status: 400 });
     }
 
-    const key = process.env.AZURE_SPEECH_KEY!;
-    const region = process.env.AZURE_SPEECH_REGION!;
+    const apiKey = process.env.SPEECHACE_API_KEY!;
 
-    const arrayBuffer = await audioFile.arrayBuffer();
+    // Build multipart form for Speechace
+    const speechaceForm = new FormData();
+    speechaceForm.append("user_audio_file", audioFile, "recording.webm");
+    speechaceForm.append("text", referenceText);
+    speechaceForm.append("user_id", "speakup_user");
+    speechaceForm.append("dialect", "en-us");
 
-    const speechConfig = sdk.SpeechConfig.fromSubscription(key, region);
-    speechConfig.speechRecognitionLanguage = "en-US";
-
-    const pushStream = sdk.AudioInputStream.createPushStream(
-      sdk.AudioStreamFormat.getWaveFormatPCM(16000, 16, 1)
+    const response = await fetch(
+      `https://api.speechace.co/api/scoring/text/v0.5/json?key=${apiKey}`,
+      {
+        method: "POST",
+        body: speechaceForm,
+      }
     );
-    pushStream.write(arrayBuffer);
-    pushStream.close();
 
-    const audioConfig = sdk.AudioConfig.fromStreamInput(pushStream);
-    const recognizer = new sdk.SpeechRecognizer(speechConfig, audioConfig);
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error("Speechace error:", errText);
+      return NextResponse.json({ error: "Speechace API error" }, { status: 500 });
+    }
 
-    const pronunciationConfig = new sdk.PronunciationAssessmentConfig(
-      referenceText,
-      sdk.PronunciationAssessmentGradingSystem.HundredMark,
-      sdk.PronunciationAssessmentGranularity.Phoneme,
-      true
-    );
-    pronunciationConfig.applyTo(recognizer);
+    const data: SpeechaceResponse = await response.json();
 
-    const result = await new Promise<sdk.SpeechRecognitionResult>((resolve, reject) => {
-      recognizer.recognizeOnceAsync(resolve, reject);
-    });
-
-    recognizer.close();
-
-    if (result.reason !== sdk.ResultReason.RecognizedSpeech) {
+    if (data.status !== "success") {
+      console.error("Speechace returned non-success:", data);
       return NextResponse.json({ error: "Speech not recognized" }, { status: 422 });
     }
 
-    const pronunciationResult = sdk.PronunciationAssessmentResult.fromResult(result);
+    const words = data.text_score.word_score_list.map((w) => ({
+      word: w.word,
+      accuracyScore: Math.round(w.quality_score),
+      // Flag the worst-sounding phoneme for feedback context
+      worstPhone: w.phone_score_list?.length
+        ? w.phone_score_list.reduce((worst, p) =>
+            p.quality_score < worst.quality_score ? p : worst
+          )
+        : null,
+    }));
 
-    // Build word-level scores
-    const words = pronunciationResult.detailResult?.Words?.map((w) => ({
-      word: w.Word,
-      accuracyScore: w.PronunciationAssessment?.AccuracyScore ?? 0,
-      errorType: w.PronunciationAssessment?.ErrorType ?? "None",
-    })) ?? [];
+    const overallScore = Math.round(data.text_score.quality_score);
+    const fluencyScore = Math.round(
+      data.text_score.fluency_score?.overall_fluency_score ?? overallScore
+    );
+
+    const completenessScore = Math.round(
+      (words.filter((w) => w.accuracyScore > 0).length / words.length) * 100
+    );
 
     return NextResponse.json({
-      recognizedText: result.text,
-      overallScore: Math.round(pronunciationResult.accuracyScore),
-      fluencyScore: Math.round(pronunciationResult.fluencyScore),
-      completenessScore: Math.round(pronunciationResult.completenessScore),
+      overallScore,
+      fluencyScore,
+      completenessScore,
       words,
     });
   } catch (err) {
