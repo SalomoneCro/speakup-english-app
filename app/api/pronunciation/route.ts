@@ -61,10 +61,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Speech not recognized" }, { status: 422 });
     }
 
+    // Apply a stricter curve: Speechace raw scores are generous by default.
+    // Power of 1.7 brings high scores down meaningfully while keeping perfect scores at 100.
+    // e.g. raw 90 → 83, raw 80 → 70, raw 70 → 57, raw 60 → 44, raw 50 → 31
+    const stricten = (raw: number) => Math.round(Math.pow(raw / 100, 1.7) * 100);
+
     const words = data.text_score.word_score_list.map((w) => ({
       word: w.word,
-      accuracyScore: Math.round(w.quality_score),
-      // Flag the worst-sounding phoneme for feedback context
+      accuracyScore: stricten(w.quality_score),
       worstPhone: w.phone_score_list?.length
         ? w.phone_score_list.reduce((worst, p) =>
             p.quality_score < worst.quality_score ? p : worst
@@ -72,7 +76,7 @@ export async function POST(req: NextRequest) {
         : null,
     }));
 
-    const overallScore = Math.round(data.text_score.quality_score);
+    const overallScore = stricten(data.text_score.quality_score);
     const fluencyScore = Math.round(
       data.text_score.fluency_score?.overall_fluency_score ?? overallScore
     );

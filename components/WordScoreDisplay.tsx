@@ -11,14 +11,14 @@ interface Props {
 }
 
 function getWordColor(score: number): string {
-  if (score >= 80) return "text-green-400";
-  if (score >= 50) return "text-yellow-400";
+  if (score >= 85) return "text-green-400";
+  if (score >= 65) return "text-yellow-400";
   return "text-red-400";
 }
 
 function getWordBg(score: number): string {
-  if (score >= 80) return "bg-green-400/20 border-green-400/40";
-  if (score >= 50) return "bg-yellow-400/20 border-yellow-400/40";
+  if (score >= 85) return "bg-green-400/20 border-green-400/40";
+  if (score >= 65) return "bg-yellow-400/20 border-yellow-400/40";
   return "bg-red-400/20 border-red-400/40";
 }
 

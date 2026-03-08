@@ -5,16 +5,17 @@ interface Props {
 }
 
 function getScoreColor(score: number) {
-  if (score >= 80) return "#4ade80"; // green
-  if (score >= 50) return "#facc15"; // yellow
+  if (score >= 85) return "#4ade80"; // green
+  if (score >= 65) return "#facc15"; // yellow
   return "#f87171"; // red
 }
 
 function getScoreLabel(score: number) {
   if (score >= 90) return "¡Excelente!";
-  if (score >= 75) return "¡Muy bien!";
-  if (score >= 50) return "Sigue practicando";
-  return "Necesitas practicar";
+  if (score >= 80) return "¡Muy bien!";
+  if (score >= 65) return "Sigue practicando";
+  if (score >= 45) return "Necesitas practicar";
+  return "¡Sigue intentando!";
 }
 
 export default function ScoreRing({ score }: Props) {
