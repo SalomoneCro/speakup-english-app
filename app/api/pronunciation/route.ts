@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
+// Allow up to 10MB for audio uploads and 30s for Speechace to respond
+export const maxDuration = 30;
+export const dynamic = "force-dynamic";
+
 interface SpeechacePhone {
   phone: string;
   quality_score: number;

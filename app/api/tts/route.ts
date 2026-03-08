@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
+export const maxDuration = 15;
+export const dynamic = "force-dynamic";
+
 export async function POST(req: NextRequest) {
   try {
     const { text, language } = await req.json();

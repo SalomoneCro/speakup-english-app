@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
+export const maxDuration = 20;
+export const dynamic = "force-dynamic";
+
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
 // Fallback tips used when Gemini is unavailable
