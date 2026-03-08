@@ -3,7 +3,7 @@
 interface WordScore {
   word: string;
   accuracyScore: number;
-  errorType: string;
+  errorType?: string;
 }
 
 interface Props {

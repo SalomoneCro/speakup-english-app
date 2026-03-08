@@ -11,7 +11,7 @@ type AppState = "home" | "practice" | "recording" | "processing" | "results";
 interface WordScore {
   word: string;
   accuracyScore: number;
-  errorType: string;
+  worstPhone: { phone: string; quality_score: number; sound_most_like: string } | null;
 }
 
 interface PronunciationResult {
@@ -45,6 +45,7 @@ export default function Home() {
   const [currentSentence, setCurrentSentence] = useState<Sentence | null>(null);
   const [result, setResult] = useState<PronunciationResult | null>(null);
   const [feedback, setFeedback] = useState<string>("");
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -100,32 +101,49 @@ export default function Home() {
         formData.append("referenceText", currentSentence.text);
 
         try {
+          // Step 1: get pronunciation scores
           const pronRes = await fetch("/api/pronunciation", { method: "POST", body: formData });
           const pronData: PronunciationResult = await pronRes.json();
-          setResult(pronData);
 
-          const feedbackRes = await fetch("/api/feedback", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              referenceText: currentSentence.text,
-              overallScore: pronData.overallScore,
-              words: pronData.words,
-              focusSound: currentSentence.focusSound,
-            }),
-          });
-          const feedbackData = await feedbackRes.json();
-          setFeedback(feedbackData.feedback);
+          if (!pronRes.ok || !pronData.words) {
+            throw new Error("Pronunciation API failed");
+          }
+
+          // Step 2: show results immediately — don't wait for feedback
+          setResult(pronData);
+          setFeedback("");
           setAppState("results");
 
-          if (feedbackData.feedback) {
-            setIsPlayingAudio(true);
-            await playTTS(feedbackData.feedback, "es-ES");
-            setIsPlayingAudio(false);
+          // Step 3: load feedback in background
+          setFeedbackLoading(true);
+          try {
+            const feedbackRes = await fetch("/api/feedback", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                referenceText: currentSentence.text,
+                overallScore: pronData.overallScore,
+                words: pronData.words,
+                focusSound: currentSentence.focusSound,
+              }),
+            });
+            const feedbackData = await feedbackRes.json();
+            if (feedbackData.feedback) {
+              setFeedback(feedbackData.feedback);
+              setIsPlayingAudio(true);
+              await playTTS(feedbackData.feedback, "es-ES");
+              setIsPlayingAudio(false);
+            }
+          } catch (feedbackErr) {
+            console.error("Feedback error:", feedbackErr);
+            // Feedback failing doesn't break the results screen
+          } finally {
+            setFeedbackLoading(false);
           }
+
         } catch (err) {
-          console.error(err);
-          alert("Hubo un error procesando tu pronunciación. Intenta de nuevo.");
+          console.error("Pronunciation error:", err);
+          alert("No se pudo analizar tu pronunciación. Intenta de nuevo.");
           setAppState("practice");
         }
         resolve();
@@ -155,10 +173,7 @@ export default function Home() {
   if (appState === "home") {
     return (
       <main className={`${BG} h-screen flex flex-col items-center justify-between p-8`}>
-        {/* Top spacer */}
         <div />
-
-        {/* Center content */}
         <div className="flex flex-col items-center gap-6 text-center">
           <div className="text-7xl">🎙️</div>
           <div>
@@ -167,8 +182,6 @@ export default function Home() {
           </div>
           <DifficultySelector selected={difficulty} onChange={setDifficulty} />
         </div>
-
-        {/* Bottom button */}
         <button
           onClick={handleStart}
           className="w-full max-w-xs bg-white text-purple-900 font-bold text-xl py-5 rounded-3xl shadow-2xl active:scale-95 transition-transform"
@@ -183,7 +196,6 @@ export default function Home() {
   if (appState === "practice" || appState === "recording") {
     return (
       <main className={`${BG} h-screen flex flex-col p-6`}>
-        {/* Header */}
         <div className="flex justify-between items-center pt-2 pb-4">
           <button onClick={() => setAppState("home")} className="text-white/60 text-sm active:text-white">
             ← Inicio
@@ -193,7 +205,6 @@ export default function Home() {
           </span>
         </div>
 
-        {/* Sentence card — grows to fill space */}
         <div className="flex-1 flex flex-col items-center justify-center gap-5">
           <p className="text-white/50 text-xs uppercase tracking-widest">Repite en inglés</p>
           <div className="bg-white/10 backdrop-blur rounded-3xl p-6 w-full text-center border border-white/20">
@@ -213,7 +224,6 @@ export default function Home() {
           </button>
         </div>
 
-        {/* Mic button — pinned to bottom */}
         <div className="flex flex-col items-center gap-3 pb-4">
           {appState === "recording" && (
             <div className="flex items-center gap-2 text-red-400 animate-pulse">
@@ -263,10 +273,10 @@ export default function Home() {
     return (
       <main className={`${BG} h-screen flex flex-col p-5`}>
 
-        {/* Top: score + sub-scores */}
-        <div className="flex items-center justify-between pt-2 pb-3">
+        {/* TOP: score ring + sub-scores — fixed, never scrolls */}
+        <div className="flex items-center gap-4 pt-2 pb-3 shrink-0">
           <ScoreRing score={result.overallScore} />
-          <div className="flex flex-col gap-2 flex-1 ml-4">
+          <div className="flex flex-col gap-2 flex-1">
             <div className="bg-white/10 rounded-2xl px-4 py-2 text-center">
               <p className="text-white/50 text-xs">Fluidez</p>
               <p className="text-white font-bold text-lg">{result.fluencyScore}%</p>
@@ -278,8 +288,8 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Middle: word colors + feedback — scrollable if needed */}
-        <div className="flex-1 flex flex-col gap-3 overflow-y-auto">
+        {/* MIDDLE: scrollable content area */}
+        <div className="flex-1 overflow-y-auto flex flex-col gap-3 min-h-0">
           {/* Word breakdown */}
           <div className="bg-white/10 rounded-2xl p-4 border border-white/15">
             <p className="text-white/50 text-xs uppercase tracking-widest mb-3 text-center">
@@ -293,34 +303,45 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Feedback */}
-          {feedback && (
-            <div className="bg-indigo-500/20 border border-indigo-400/30 rounded-2xl p-4">
-              <p className="text-white/50 text-xs uppercase tracking-widest mb-1">💬 Retroalimentación</p>
-              <p className="text-white/90 text-sm leading-relaxed">{feedback}</p>
-              <button
-                onClick={() => playTTS(feedback, "es-ES")}
-                disabled={isPlayingAudio}
-                className="mt-2 text-indigo-300 text-xs disabled:opacity-40"
-              >
-                🔊 Escuchar de nuevo
-              </button>
-            </div>
-          )}
+          {/* Feedback — loading or content */}
+          <div className="bg-indigo-500/20 border border-indigo-400/30 rounded-2xl p-4">
+            <p className="text-white/50 text-xs uppercase tracking-widest mb-2">💬 Retroalimentación</p>
+            {feedbackLoading ? (
+              <div className="flex items-center gap-2 text-white/50">
+                <span className="animate-pulse">●</span>
+                <span className="animate-pulse" style={{ animationDelay: "0.2s" }}>●</span>
+                <span className="animate-pulse" style={{ animationDelay: "0.4s" }}>●</span>
+                <span className="text-sm ml-1">Generando consejo...</span>
+              </div>
+            ) : feedback ? (
+              <>
+                <p className="text-white/90 text-sm leading-relaxed">{feedback}</p>
+                <button
+                  onClick={() => playTTS(feedback, "es-ES")}
+                  disabled={isPlayingAudio}
+                  className="mt-2 text-indigo-300 text-xs disabled:opacity-40"
+                >
+                  🔊 Escuchar de nuevo
+                </button>
+              </>
+            ) : (
+              <p className="text-white/40 text-sm">No se pudo cargar el consejo.</p>
+            )}
+          </div>
         </div>
 
-        {/* Bottom: action buttons + difficulty change */}
-        <div className="flex flex-col gap-2 pt-3">
+        {/* BOTTOM: action buttons — always visible, never scrolls */}
+        <div className="flex flex-col gap-2 pt-3 shrink-0">
           <div className="flex gap-2">
             <button
               onClick={handleTryAgain}
-              className="flex-1 bg-white/15 border border-white/25 text-white font-semibold py-3.5 rounded-2xl active:scale-95 transition-transform text-sm"
+              className="flex-1 bg-white/15 border border-white/25 text-white font-semibold py-4 rounded-2xl active:scale-95 transition-transform text-sm"
             >
               🔄 Intentar de nuevo
             </button>
             <button
               onClick={handleNextSentence}
-              className="flex-1 bg-white text-purple-900 font-bold py-3.5 rounded-2xl shadow-lg active:scale-95 transition-transform text-sm"
+              className="flex-1 bg-white text-purple-900 font-bold py-4 rounded-2xl shadow-lg active:scale-95 transition-transform text-sm"
             >
               Siguiente →
             </button>
