@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // Allow Azure Speech SDK to work server-side
+  serverExternalPackages: ["microsoft-cognitiveservices-speech-sdk"],
 };
 
 export default nextConfig;
